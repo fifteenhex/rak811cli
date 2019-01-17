@@ -14,6 +14,14 @@ import prompt_toolkit.patch_stdout
 import prompt_toolkit.lexers
 import prompt_toolkit.completion
 from prompt_toolkit import print_formatted_text, HTML
+import dataparameter
+
+
+class State:
+    __slots__ = ['joined']
+
+    def __init__(self):
+        self.joined = False
 
 
 class Parameter:
@@ -56,7 +64,7 @@ class Command:
         self.possible_parameters += map(param_name, required_parameters)
         self.possible_parameters += map(param_name, optional_parameters)
 
-    async def run(self, rak811, parameters: dict):
+    async def run(self, rak811, state: State, parameters: dict):
         pass
 
 
@@ -75,13 +83,14 @@ class JoinCommand(Command):
     def __init__(self):
         super(JoinCommand, self).__init__(optional_parameters=[parameter_app_eui, parameter_dev_eui, parameter_key])
 
-    async def run(self, rak811, parameters: dict):
+    async def run(self, rak811, state: State, parameters: dict):
         if len(parameters) is 3:
             rak811.set_otaa_parameters(parameters['app_eui'], parameters['dev_eui'], parameters['key'])
         elif len(parameters) is not 0:
             print_formatted_text('either supply the app_eui, dev_eui and key or nothing')
             return
         rak811.join()
+        state.joined = True
 
 
 class SendCommand(Command):
@@ -89,13 +98,23 @@ class SendCommand(Command):
         super(SendCommand, self).__init__(required_parameters=[parameter_port, parameter_data],
                                           optional_parameters=[parameter_confirm])
 
-    async def run(self, rak811, parameters: dict):
+    async def run(self, rak811, state: State, parameters: dict):
+        if not state.joined:
+            print_formatted_text(HTML('<b>join</b> first'))
+            return
+
         port = int(parameters['port'])
+
+        data = dataparameter.parse(parameters['data'])
+        if data is None:
+            print_formatted_text('couldnt parse data')
+            return
+
         confirm = False
         if 'confirm' in parameters:
             confirm = bool(parameters['confirm'])
 
-        rak811.send(port, b'00112233', confirmed=confirm)
+        rak811.send(port, data, confirmed=confirm)
 
 
 commands = {
@@ -104,16 +123,21 @@ commands = {
     'send': SendCommand()
 }
 
-parameter_regex = '(%s)\\s(\\w*)\\s?' % '|'.join(map(lambda p: p.name, parameters))
+pattern_field = '\\w{1,}'
+field_patterns = [pattern_field, dataparameter.pattern_string, dataparameter.pattern_file,
+                  dataparameter.pattern_file_quoted, dataparameter.pattern_b64]
+parameter_regex = '(%s)\\s(%s)\\s?' % ('|'.join(map(lambda p: p.name, parameters)), '|'.join(field_patterns))
 regex = '(%s)(\\s(%s){0,})?' % ('|'.join(commands), parameter_regex)
 
 
 async def main(serialport: str):
+    print(parameter_regex)
+
     logging.basicConfig(level=logging.DEBUG)
 
-    ser = serial.Serial(serialport, 115200, timeout=10)  # open serial port
-    rak811 = Rak811(ser)
+    state = State()
 
+    rak811 = Rak811.from_path(serialport)
     rak811.reset()
 
     session = PromptSession()
@@ -128,7 +152,7 @@ async def main(serialport: str):
 
                 command = commands[c]
 
-                call = True;
+                call = True
 
                 params = {}
                 if p is not None:
@@ -141,7 +165,7 @@ async def main(serialport: str):
                     call = len(invalid_params) == 0
 
                 if call:
-                    await command.run(rak811, params)
+                    await command.run(rak811, state, params)
 
             else:
                 print('dunno')
