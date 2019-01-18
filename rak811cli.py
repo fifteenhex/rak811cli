@@ -69,7 +69,7 @@ class Command:
 
 
 class HelpCommand(Command):
-    async def run(self, rak811, required_parameters: dict):
+    async def run(self, rak811, state, required_parameters: dict):
         for command in commands:
             required_parameters = ' '.join(
                 map(lambda p: '%s %s' % (p.name, p.value_description), commands[command].required_parameters))
@@ -89,8 +89,7 @@ class JoinCommand(Command):
         elif len(parameters) is not 0:
             print_formatted_text('either supply the app_eui, dev_eui and key or nothing')
             return
-        rak811.join()
-        state.joined = True
+        state.joined = rak811.join()
 
 
 class SendCommand(Command):
